@@ -24,6 +24,7 @@ Const $PgmVersion = "2022.12.01"
 #AutoIt3Wrapper_Res_Icon_Add=include/icons/b1_icon.ico
 #AutoIt3Wrapper_Res_Icon_Add=include/icons/m_icon_new.ico
 #AutoIt3Wrapper_Icon=include/icons/b0_icon.ico
+#AutoIt3Wrapper_UseX64=y
 
 #include <GUIConstantsEx.au3>
 #include <WindowsConstants.au3>
