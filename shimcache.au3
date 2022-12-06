@@ -51,6 +51,16 @@ Global $FM_LastLog = -1								; remember last displayed FASTMAP logfile
 Global $hListFont, $fListHasFocus=0, $listRows, $listData[1][1]
 #include "include/GlobalUI.au3"
 
+; get parameters from the environment, can use to customize
+Global $screenH = @DesktopHeight
+Global $screenW = @DesktopWidth
+
+; 0=default, 1=NX widescreen
+Global $screenType = 0
+if (($screenH == 1200) And ($screenW = 1920)) Then
+	$screenType = 1
+EndIf
+
 ; read optional command line parameters (GUIMode, working directory)
 If ($CmdLine[0] > 0) Then
 	$GUIMode = $CmdLine[1]
@@ -126,6 +136,7 @@ Func _Main()
 		$editFontNm = "Lucida Console"
 		$editFontH = 11
 		$nEditBoxLines = 65
+		If $screenType == 1 Then $nEditBoxLines = 90
 	EndIf
 
 	; calculate dependent parameters
@@ -757,9 +768,17 @@ Func FM_UpdateListView()
 	Next
 
 	; reset log history and select Newest which will show the newest log
+	; note: ClickItem seems to be too fast sometimes for GUICtrlSetOnEvent to register,
+	;       so we will retry for e.g. 2 seconds to make sure it does
 	$FM_LastLog = -1
 	If (_GUICtrlListView_GetItemCount($idList) > 0) Then
 		_GUICtrlListView_ClickItem($idList, 0)
+		Local $clickTries = 1
+		While (($FM_LastLog == -1) And ($clickTries <= 20))
+			Sleep(100)
+			_GUICtrlListView_ClickItem($idList, 0)
+			$clickTries += 1
+		WEnd
 	EndIf
 
 	GUICtrlSetState($idList, $GUI_FOCUS) ; put focus back on list after any popup
