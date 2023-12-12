@@ -18,7 +18,7 @@
 ;                     all current versions including Numaris X (XA30A)
 ; -----------------------------------------------------------------------------
 
-Const $PgmVersion = "2022.12.01"
+Const $PgmVersion = "2023.04.11"
 
 #AutoIt3Wrapper_Res_Icon_Add=include/icons/b0_icon.ico
 #AutoIt3Wrapper_Res_Icon_Add=include/icons/b1_icon.ico
@@ -126,7 +126,7 @@ Func _Main()
 	; default parameters are for B0 mode; modify parameters for different modes
 	If ($GUIMode == 1) Then
 		; for B1 mode we may want to change the window width
-		$winW = 1100 ; should be enough for 16Tx ?
+		$winW = 1245 ; this is good for 16Tx in VE12
 	ElseIf ($GUIMode == 2) Then
 		; FASTMAP mode can use a narrower window width since it stores integer shim DAC/currents
 		; the edit box is much larger and monospaced
@@ -147,6 +147,13 @@ Func _Main()
 	; create the main window
 	$hGUI = GUICreate($PgmName, $winW+2, $winH+24, -1, -1, $WS_SIZEBOX + $WS_SYSMENU)
 	GUISetFont($mainFontSz, $FW_NORMAL, $GUI_FONTNORMAL, $mainFontNm)
+
+    ; set icon (uses negative numbers starting with -5 for first included)
+	If ($GUIMode == 1) Then
+		GUISetIcon(@AutoItExe, -6)
+	ElseIf ($GUIMode == 2) Then
+		GUISetIcon(@AutoItExe, -7)
+	EndIf
 
 	; top row of buttons, left side
 	Local $left, $btnW
@@ -219,9 +226,9 @@ Func _Main()
 	GUIRegisterMsg($WM_GETMINMAXINFO, "WM_GETMINMAXINFO") ; monitors resizing of the GUI
 
 	; list box (global)
-	Local $header = "#|Date/Time|X|Y|Z|Z2|ZX|ZY|X2-Y2|XY|Z3|Z2X|Z2Y|Z(X2-Y2)"
+	Local $header = "#|Description|X|Y|Z|Z2|ZX|ZY|X2-Y2|XY|Z3|Z2X|Z2Y|Z(X2-Y2)"
 	If ($GUIMode == 1) Then
-		$header = "#|Date/Time          |Tx1    |Tx2    |Tx3    |Tx4    |Tx5    |Tx6    |Tx7    |Tx8    |Tx9    |Tx10   |Tx11   |Tx12   |Tx13   |Tx14   |Tx15   |Tx16   "
+		$header = "#|Description        |Tx1    |Tx2    |Tx3    |Tx4    |Tx5    |Tx6    |Tx7    |Tx8    |Tx9    |Tx10   |Tx11   |Tx12   |Tx13   |Tx14   |Tx15   |Tx16   "
 	ElseIf ($GUIMode == 2) Then
 		$header = "Set   |Date/Time|X|Y|Z|Z2|ZX|ZY|X2-Y2|XY|Z3|Z2X|Z2Y|Z(X2-Y2)"
 	EndIf
@@ -698,33 +705,64 @@ EndFunc ;==>GetShimValuesFromFile
 Func GetTimeStampFromFilename($fname)
 	; This is hardwired, assuming the filename is shimset_YYYYMMDDHHMMSS.txt
 	; For human readable format we will use YYYY-MM-DD HH:MM:SS
+	; Pass through any filenames that do not contain timestamps
 
 	; remove head and tail
 	Local $tStr = StringTrimLeft(StringTrimRight($fname, StringLen($ShimFileSuffix)), StringLen($ShimFilePrefix))
 
-	; this is any extra label text (e.g. " - Copy", doesn't seem to be a reason to disallow it)
-	Local $tRem = StringTrimLeft($tStr, 14)
+	; determine if this is really a timestamp
+	; ignore any trailing text, but only convert if the first 14 chars are a valid number
+	Local $isTimeStamp = False
+	If (StringLen($tStr) >= 14) Then
+		If (StringIsDigit(StringLeft($tStr, 14))) Then
+			$isTimeStamp = True
+		EndIf
+	EndIf
 
-	; reformat datetime string in a more human readable format for display
-	$tStr = StringLeft($tStr, 4) & "-" & StringMid($tStr, 5, 2) & "-" & StringMid($tStr, 7, 2) & " " _
-		& StringMid($tStr, 9, 2) & ":" & StringMid($tStr, 11, 2) & ":" & StringMid($tStr, 13, 2)
+	If ($isTimeStamp) Then
+		; this is any extra label text (e.g. " - Copy", doesn't seem to be a reason to disallow it)
+		Local $tRem = StringTrimLeft($tStr, 14)
 
-	Return $tStr & $tRem
+		; reformat datetime string in a more human readable format for display
+		$tStr = StringLeft($tStr, 4) & "-" & StringMid($tStr, 5, 2) & "-" & StringMid($tStr, 7, 2) & " " _
+			& StringMid($tStr, 9, 2) & ":" & StringMid($tStr, 11, 2) & ":" & StringMid($tStr, 13, 2)
+		$tStr = $tStr & $tRem
+	EndIf
+
+	Return $tStr
 EndFunc ;==>GetTimeStampFromFilename
 
 
 Func GetFilenameFromTimeStamp($timestamp)
 	; This is hardwired, assuming the filename is shimset_YYYYMMDDHHMMSS.txt
 	; For human readable format we will use YYYY-MM-DD HH:MM:SS
+	; Pass through any filenames that do not contain timestamps
 
-	; this is any extra label text (e.g. " - Copy")
-	Local $tRem = StringTrimLeft($timestamp, 19)
+	Local $tStr = $timestamp
 
-	; convert human readable format back into datetime string
-	Local $tStr = StringLeft($timestamp, 4) & StringMid($timestamp, 6, 2) & StringMid($timestamp, 9, 2) _
-		& StringMid($timestamp, 12, 2) & StringMid($timestamp, 15, 2) & StringMid($timestamp, 18, 2)
+	; determine if this is really a timestamp
+	Local $isTimeStamp = False
+	If (StringLen($tStr) >= 19) Then
+		Local $testNum = StringLeft($tStr, 4) & StringMid($tStr, 6, 2) & StringMid($tStr, 9, 2) _
+			& StringMid($tStr, 12, 2) & StringMid($tStr, 15, 2) & StringMid($tStr, 18, 2)
+		Local $testSep = StringMid($tStr, 5, 1) & StringMid($tStr, 8, 1) & StringMid($tStr, 11, 1) _
+			& StringMid($tStr, 14, 1) & StringMid($tStr, 17, 1)
+		If ((StringIsDigit($testNum)) And (StringCompare($testSep, "-- ::") == 0)) Then
+			$isTimeStamp = True
+		EndIf
+	EndIf
 
-	Return $ShimFilePrefix & $tStr & $tRem & $ShimFileSuffix
+	If ($isTimeStamp) Then
+		; this is any extra label text (e.g. " - Copy")
+		Local $tRem = StringTrimLeft($timestamp, 19)
+
+		; convert human readable format back into datetime string
+		$tStr = StringLeft($timestamp, 4) & StringMid($timestamp, 6, 2) & StringMid($timestamp, 9, 2) _
+			& StringMid($timestamp, 12, 2) & StringMid($timestamp, 15, 2) & StringMid($timestamp, 18, 2)
+		$tStr = $tStr & $tRem
+	EndIf
+
+	Return $ShimFilePrefix & $tStr & $ShimFileSuffix
 EndFunc ;==>GetFilenameFromTimeStamp
 
 
