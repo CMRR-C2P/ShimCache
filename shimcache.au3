@@ -23,7 +23,7 @@ Const $PgmVersion = "2023.04.11"
 #AutoIt3Wrapper_Res_Icon_Add=include/icons/b0_icon.ico
 #AutoIt3Wrapper_Res_Icon_Add=include/icons/b1_icon.ico
 #AutoIt3Wrapper_Res_Icon_Add=include/icons/m_icon_new.ico
-#AutoIt3Wrapper_Icon=include/icons/b0_icon.ico
+#AutoIt3Wrapper_Icon=include/icons/m_icon_new.ico
 #AutoIt3Wrapper_UseX64=y
 
 #include <GUIConstantsEx.au3>
@@ -149,10 +149,10 @@ Func _Main()
 	GUISetFont($mainFontSz, $FW_NORMAL, $GUI_FONTNORMAL, $mainFontNm)
 
     ; set icon (uses negative numbers starting with -5 for first included)
-	If ($GUIMode == 1) Then
+	If ($GUIMode == 0) Then
+		GUISetIcon(@AutoItExe, -5)
+	ElseIf ($GUIMode == 1) Then
 		GUISetIcon(@AutoItExe, -6)
-	ElseIf ($GUIMode == 2) Then
-		GUISetIcon(@AutoItExe, -7)
 	EndIf
 
 	; top row of buttons, left side
