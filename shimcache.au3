@@ -16,9 +16,11 @@
 ;   2022.12.01 - EA - Refreshed UI, added more error checking/validation,
 ;                     added B1 and FASTMAP mode options, updated to support
 ;                     all current versions including Numaris X (XA30A)
+;   2024.12.03 - EA - Updated AdjValidate syntax for XA60A+ multi-GPA configs,
+;                     improved error handling and reporting
 ; -----------------------------------------------------------------------------
 
-Const $PgmVersion = "2023.04.11"
+Const $PgmVersion = "2024.12.03"
 
 #AutoIt3Wrapper_Res_Icon_Add=include/icons/b0_icon.ico
 #AutoIt3Wrapper_Res_Icon_Add=include/icons/b1_icon.ico
@@ -46,6 +48,8 @@ Global $AdjValidate, $ScratchDir					; filenames/paths
 Global $hGUI, $idExit, $hList, $idList, $idEdit		; window handles
 Global $winW, $winH									; window dimensions (minimum)
 Global $FM_LastLog = -1								; remember last displayed FASTMAP logfile
+Global $NoOfGPAs = 1								; number of GPAs in system (important >XA60)
+Global $debugLog = 0								; debug log level (0 = release, 1 = debug)
 
 ; for multi-line list view (B1 mode)
 Global $hListFont, $fListHasFocus=0, $listRows, $listData[1][1]
@@ -135,7 +139,7 @@ Func _Main()
 		$editFontSz = 8
 		$editFontNm = "Lucida Console"
 		$editFontH = 11
-		$nEditBoxLines = 65
+		$nEditBoxLines = 75
 		If $screenType == 1 Then $nEditBoxLines = 90
 	EndIf
 
@@ -330,21 +334,52 @@ Func OnGet()
 
 	LogMessage("AdjValidate" & $cmdArgs & $ShimsetFilename)
 	Local $ProcID = Run(@ComSpec & ' /s /c "' & $AdjValidate & '"' & $cmdArgs & $ShimsetFilename, @WorkingDir, @SW_HIDE, $STDERR_CHILD + $STDOUT_CHILD)
-	ProcessWaitClose($ProcID)
+	Local $procRet = ProcessWaitClose($ProcID)
+	Local $procErr = @extended
 	Local $sOut = StdoutRead($ProcID)
 	Local $sErr = StderrRead($ProcID)
+	Local $dumpErr = 0
 
-    ; success = "OK" on stderr
-	If ((@extended > 1) And (0 == StringCompare(StringStripWS($sErr, $STR_STRIPALL), "OK"))) Then
-		Local $shimarr = GetShimValuesFromFile($ShimsetFilename)
-		If (UBound($shimarr) > 1) Then
-			LogMessage("Succeeded!")
-			$validShims = True
+	If ($procRet == 1) Then
+		If ($procErr <> 0) Then
+			; error returns nonzero exit code
+			LogMessage("ERROR attempting to read current shims!")
+			$dumpErr += 1
+		Else
+			; N4 returned "OK" on stderr; throw a warning if we see anything else
+			If ((UBound($sErr) > 1) And (StringCompare(StringStripWS($sErr, $STR_STRIPALL), "OK"))) Then
+				LogMessage("WARNING: unexpected response reading current shims!")
+				$dumpErr += 1
+			EndIf
+
+			; otherwise, success = exit code zero
+			Local $shimarr = GetShimValuesFromFile($ShimsetFilename)
+			If (UBound($shimarr) > 1) Then
+				LogMessage("Succeeded!")
+				$validShims = True
+			Else
+				LogMessage("ERROR: shimset is empty!")
+				$dumpErr += 1
+			EndIf
 		EndIf
-	ElseIf (@extended) Then
-		LogMessage("ERROR attempting to read current shims: " & $sErr)
 	Else
-		LogMessage("FAILED: protocol not open?")
+		LogMessage("UNEXPECTED ERROR: Failed to execute AdjValidate command!")
+	EndIf
+
+	If ($dumpErr > 0) Then
+        ; try to catch and parse common errors
+		If (StringInStr($sOut, "loading current online prot failed")) Then
+			; note: in N4 at least, no message is printed in this case, only the error code is set!
+			LogMessage("Current protocol is not open!")
+			$dumpErr = 0
+		ElseIf ($procErr == 1) Then
+			LogMessage("Is the current protocol open?")
+		EndIf
+	EndIf
+	If ($dumpErr > 0) Or ($debugLog > 1) Then
+		LogMessage("Debug: process returned status " & $procRet & " / code " & $procErr)
+		If (StringLen($sOut)) Then LogMessage("Debug: stdout = '" & $sOut & "'")
+		If (StringLen($sErr)) Then LogMessage("Debug: stderr = '" & $sErr & "'")
 	EndIf
 
 	If (Not $validShims) Then
@@ -407,6 +442,25 @@ Func OnSet()
 	ElseIf ($GUIMode == 2) Then
 		; for FASTMAP, we are using DAC and mA units, so no mp flag
 		$cmdArgs = " -shim -set "
+		; if we have multiple GPAs, need to replicate gradient offsets (pos. 3,4,5)
+		If ($NoOfGPAs > 1) Then
+			Local $ssize = UBound($shimvalArr)
+			Local $shimvalArr2[$ssize+3*($NoOfGPAs-1)]
+			Local $ctr = 0
+			For $idx=0 To $ssize-1
+				If ($idx = 6) Then
+					For $gpaidx=1 To $NoOfGPAs-1
+						$shimvalArr2[$ctr]   = $shimvalArr[$idx-3]
+						$shimvalArr2[$ctr+1] = $shimvalArr[$idx-2]
+						$shimvalArr2[$ctr+2] = $shimvalArr[$idx-1]
+						$ctr += 3
+					Next
+				EndIf
+				$shimvalArr2[$ctr] = $shimvalArr[$idx]
+				$ctr += 1
+			Next
+			$shimvalArr = $shimvalArr2
+		EndIf
 	Else
 		; for B0 mode, add mp flag for uT/m
 		$cmdArgs = " -shim -mp -set "
@@ -418,18 +472,43 @@ Func OnSet()
 
 	LogMessage("AdjValidate" & $cmdArgs & $shimvalStr)
 	Local $ProcID = Run(@ComSpec & ' /s /c "' & $AdjValidate & '"' & $cmdArgs & $shimvalStr, @WorkingDir, @SW_HIDE, $STDERR_CHILD + $STDOUT_CHILD)
-	ProcessWaitClose($ProcID)
+	Local $procRet = ProcessWaitClose($ProcID)
+	Local $procErr = @extended
 	Local $sOut = StdoutRead($ProcID)
 	Local $sErr = StderrRead($ProcID)
+	Local $dumpErr = 0
 
-    ; success = "OK" on stderr
-	If ((@extended > 1) And (0 == StringCompare(StringStripWS($sErr, $STR_STRIPALL), "OK"))) Then
-		LogMessage("Succeeded!")
-		$validShims = True
-	ElseIf (@extended) Then
-		LogMessage("ERROR attempting to read current shims: " & $sErr)
+	If ($procRet == 1) Then
+		If ($procErr <> 0) Then
+			; error returns nonzero exit code
+			LogMessage("ERROR attempting to set shims!")
+			$dumpErr += 1
+		Else
+			If ((UBound($sErr) > 1) And (StringCompare(StringStripWS($sErr, $STR_STRIPALL), "OK"))) Then
+				; N4 returned "OK" on stderr; throw a warning if we see anything else
+				LogMessage("WARNING: unexpected response setting shims!")
+				$dumpErr += 1
+			EndIf
+
+			; otherwise, success = exit code zero
+			LogMessage("Succeeded!")
+			$validShims = True
+		EndIf
 	Else
-		LogMessage("FAILED: protocol not open?")
+		LogMessage("UNEXPECTED ERROR: Failed to execute AdjValidate command!")
+	EndIf
+
+	If ($dumpErr > 0) Then
+        ; try to catch and parse common errors
+		If (StringInStr($sOut, "loading current online prot failed")) Then
+			LogMessage("Current protocol is not open!")
+			$dumpErr = 0
+		EndIf
+	EndIf
+	If ($dumpErr > 0) Or ($debugLog > 1) Then
+		LogMessage("Debug: process returned status " & $procRet & " / code " & $procErr)
+		If (StringLen($sOut)) Then LogMessage("Debug: stdout = '" & $sOut & "'")
+		If (StringLen($sErr)) Then LogMessage("Debug: stderr = '" & $sErr & "'")
 	EndIf
 
 	If (Not $validShims) Then
@@ -656,6 +735,7 @@ Func GetShimValuesFromFile($fname)
 	While 1
 		Local $line = FileReadLine($fh)
 		If (@error) Then
+			If ($debugLog > 0) Then LogMessage("WARNING: " & $fname & " is invalid!")
 			FileClose($fh)
 			ExitLoop
 		EndIf
@@ -665,6 +745,21 @@ Func GetShimValuesFromFile($fname)
 		Local $arr = StringSplit(StringStripWS($line, $STR_STRIPLEADING + $STR_STRIPTRAILING + $STR_STRIPSPACES), " ", $STR_NOCOUNT)
 		Local $found = UBound($arr)
 		If (Not $found) Then ContinueLoop
+
+		; check if we have a flag indicating multiple GPAs (currently only relevant for FASTMAP >XA60)
+		If ($found > 2) And (StringCompare($arr[$found-2], "#GPAs") == 0) Then
+			If ($NoOfGPAs == 1) Then
+				$NoOfGPAs = Number($arr[$found-1], $NUMBER_32BIT)
+				If ($NoOfGPAs < 2) Then
+					$NoOfGPAs = 1
+				Else
+					LogMessage("This system has " & $NoOfGPAs & " GPAs!")
+				EndIf
+			EndIf
+			_ArrayDelete($arr, $found-1)
+			_ArrayDelete($arr, $found-2)
+			$found -= 2;
+		EndIf
 
 		; check for correct number of items based on what we are expecting
 		If ($GUIMode == 1) Then
@@ -686,10 +781,9 @@ Func GetShimValuesFromFile($fname)
 			If (($found <> 8) And ($found <> 12)) Then ContinueLoop
 		EndIf
 
-		; double check the items are all numeric
+		; double check the items are all numeric and in valid range
 		For $idx=0 To $found-1
-			If (Not IsNumber($arr[$idx])) Then ContinueLoop
-			; TODO could range check here
+			; TODO
 		Next
 
 		; everything checks out at this point, so return the | delimited string
