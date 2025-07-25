@@ -333,7 +333,8 @@ Func OnGet()
 	EndIf
 
 	LogMessage("AdjValidate" & $cmdArgs & $ShimsetFilename)
-	Local $ProcID = Run(@ComSpec & ' /s /c "' & $AdjValidate & '"' & $cmdArgs & $ShimsetFilename, @WorkingDir, @SW_HIDE, $STDERR_CHILD + $STDOUT_CHILD)
+	Local $runCmd = @ComSpec & ' /s /c ""' & $AdjValidate & '"' & $cmdArgs & $ShimsetFilename & '"'
+	Local $ProcID = Run($runCmd, @WorkingDir, @SW_HIDE, $STDERR_CHILD + $STDOUT_CHILD)
 	Local $procRet = ProcessWaitClose($ProcID)
 	Local $procErr = @extended
 	Local $sOut = StdoutRead($ProcID)
@@ -377,6 +378,7 @@ Func OnGet()
 		EndIf
 	EndIf
 	If ($dumpErr > 0) Or ($debugLog > 1) Then
+		LogMessage("Debug: last cmd = " & $runCmd)
 		LogMessage("Debug: process returned status " & $procRet & " / code " & $procErr)
 		If (StringLen($sOut)) Then LogMessage("Debug: stdout = '" & $sOut & "'")
 		If (StringLen($sErr)) Then LogMessage("Debug: stderr = '" & $sErr & "'")
@@ -471,7 +473,8 @@ Func OnSet()
 	$shimvalStr = _ArrayToString($shimvalArr, " ")
 
 	LogMessage("AdjValidate" & $cmdArgs & $shimvalStr)
-	Local $ProcID = Run(@ComSpec & ' /s /c "' & $AdjValidate & '"' & $cmdArgs & $shimvalStr, @WorkingDir, @SW_HIDE, $STDERR_CHILD + $STDOUT_CHILD)
+	Local $runCmd = @ComSpec & ' /s /c ""' & $AdjValidate & '"' & $cmdArgs & $shimvalStr & '"'
+	Local $ProcID = Run($runCmd, @WorkingDir, @SW_HIDE, $STDERR_CHILD + $STDOUT_CHILD)
 	Local $procRet = ProcessWaitClose($ProcID)
 	Local $procErr = @extended
 	Local $sOut = StdoutRead($ProcID)
@@ -506,6 +509,7 @@ Func OnSet()
 		EndIf
 	EndIf
 	If ($dumpErr > 0) Or ($debugLog > 1) Then
+		LogMessage("Debug: last cmd = " & $runCmd)
 		LogMessage("Debug: process returned status " & $procRet & " / code " & $procErr)
 		If (StringLen($sOut)) Then LogMessage("Debug: stdout = '" & $sOut & "'")
 		If (StringLen($sErr)) Then LogMessage("Debug: stderr = '" & $sErr & "'")
