@@ -263,13 +263,10 @@ Func _Main()
 	_Setup()			; set/check defaults
 	UpdateListView()	; initialize the list
 
-    ; loop until the user exits.
+	; idle until the user exits; in OnEvent mode, events are dispatched to the
+	; registered handlers (OnExit etc.) while the script sleeps
 	While 1
-		Local $msg = GUIGetMsg()
-        Switch ($msg)
-            Case $GUI_EVENT_CLOSE
-                ExitLoop
-		EndSwitch
+		Sleep(100)
 	WEnd
 EndFunc ;==>Main
 
