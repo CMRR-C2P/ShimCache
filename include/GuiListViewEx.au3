@@ -23,12 +23,13 @@ Func _GUICtrlListView_SetItemHeightByFont( $hListView, $iHeight )
 	Local $hLVfont = _WinAPI_CreateFontIndirect( $lvLOGFONT ) ; Original ListView font
 	_WinAPI_SelectObject( $hDC, $hObject )
 	_WinAPI_ReleaseDC( $hListView, $hDC )
-	_WinAPI_DeleteObject( $hFont )
+	; note: don't delete $hFont here, it is owned by AutoIt (set via GUISetFont)
 
 	; Set height of ListView items by applying text font with suitable height
+	; note: the control does not copy the font, so it must stay valid while the
+	;       ListView exists (not deleted; one handle for the lifetime of the GUI)
 	$hFont = _WinAPI_CreateFont( $iHeight, 0 )
 	_WinAPI_SetFont( $hListView, $hFont )
-	_WinAPI_DeleteObject( $hFont )
 
 	; Restore font of Header control
 	Local $hHeader = _GUICtrlListView_GetHeader( $hListView )
