@@ -18,9 +18,11 @@
 ;                     all current versions including Numaris X (XA30A)
 ;   2024.12.03 - EA - Updated AdjValidate syntax for XA60A+ multi-GPA configs,
 ;                     improved error handling and reporting
+;   2026.10.27 - EA - Fix idle CPU usage (thanks jstorrs),
+;                     even more improved error handling and reporting
 ; -----------------------------------------------------------------------------
 
-Const $PgmVersion = "2024.12.03"
+Const $PgmVersion = "2026.10.27"
 
 #AutoIt3Wrapper_Res_Icon_Add=include/icons/b0_icon.ico
 #AutoIt3Wrapper_Res_Icon_Add=include/icons/b1_icon.ico
@@ -43,13 +45,16 @@ Opt("GUIOnEventMode", 1)
 ; set default GUI mode, can be overridden by command line: 0=B0, 1=B1, 2=FASTMAP
 Global $GUIMode = 0
 
-Global $PgmName, $ShimFilePrefix, $ShimFileSuffix   ; global text
+Global $PgmName = "ShimCache"                       ; global text
+Global $ShimFilePrefix, $ShimFileSuffix
 Global $AdjValidate, $ScratchDir                    ; filenames/paths
 Global $hGUI, $idExit, $hList, $idList, $idEdit     ; window handles
+Global $idSelDummy                                  ; dummy UI control to refresh UI when selection changes
 Global $winW, $winH                                 ; window dimensions (minimum)
 Global $FM_LastLog = -1                             ; remember last displayed FASTMAP logfile
 Global $NoOfGPAs = 1                                ; number of GPAs in system (important >XA60)
 Global $debugLog = 0                                ; debug log level (0 = release, 1 = debug)
+Const  $AdjTimeout = 10                             ; max seconds to wait for AdjValidate to respond
 
 ; for multi-line list view (B1 mode)
 Global $hListFont, $fListHasFocus=0, $listRows, $listData[1][1]
@@ -67,10 +72,11 @@ EndIf
 
 ; read optional command line parameters (GUIMode, working directory)
 If ($CmdLine[0] > 0) Then
-    $GUIMode = $CmdLine[1]
-    If ($CmdLine[0] > 1) Then
-        $ScratchDir = $CmdLine[2]
+    If (Not StringRegExp($CmdLine[1], "^[0-2]$")) Then
+        MsgBox($MB_SYSTEMMODAL + $MB_TOPMOST, $PgmName & ": Setup Error", "ERROR! Invalid mode '" & $CmdLine[1] & "' (expected 0=B0, 1=B1, 2=FASTMAP)")
+        Exit 1
     EndIf
+    $GUIMode = Number($CmdLine[1])
 EndIf
 
 ; set some parameters based on mode
@@ -86,6 +92,14 @@ Else
     $PgmName = "ShimCache B0"
     $ShimFilePrefix = "shimset_"
     $ShimFileSuffix = ".txt"
+EndIf
+
+If ($CmdLine[0] > 1) Then
+    $ScratchDir = $CmdLine[2]
+    If ((FileExists($ScratchDir) == 0) Or (StringInStr(FileGetAttrib($ScratchDir), "D") == 0)) Then
+        MsgBox($MB_SYSTEMMODAL + $MB_TOPMOST, $PgmName & ": Setup Error", "ERROR! Working directory '" & $ScratchDir & "' is not valid!")
+        Exit 1
+    EndIf
 EndIf
 
 
@@ -175,6 +189,11 @@ Func _Main()
         ; button press callbacks
         GUICtrlSetOnEvent($ApplyID, "OnSet")
         GUICtrlSetOnEvent($RefreshID, "UpdateListView")
+
+        ; use dummy control to refresh log when selection changes (not just on mouse clicks)
+        $idSelDummy = GUICtrlCreateDummy()
+        GUICtrlSetOnEvent($idSelDummy, "FM_ShowLog")
+        GUIRegisterMsg($WM_NOTIFY, "FM_WM_NOTIFY")
     Else
         ; general UI for B0/B1 shimming
         $left = $lhB
@@ -318,34 +337,55 @@ Func OnGet()
     Local $validShims = False
     Local $ShimsetFilename = $ShimFilePrefix & @YEAR & @MON & @MDAY & @HOUR & @MIN & @SEC & $ShimFileSuffix
 
+    ; throw error if file already exists and we can't delete it
+    If ((FileExists($ShimsetFilename)) And (FileDelete($ShimsetFilename) == 0)) Then
+        MsgBox($MB_SYSTEMMODAL + $MB_TOPMOST, $PgmName & ": Error", "Could not remove existing " & $ShimsetFilename & "!")
+        GUICtrlSetState($idList, $GUI_FOCUS) ; put focus back on list after any popup
+        Return
+    EndIf
+
     LogMessage("Get shims to " & $ShimsetFilename)
 
     Local $cmdArgs
     If ($GUIMode == 1) Then
         ; for B1 mode
-        $cmdArgs = " -txscale -get > "
+        $cmdArgs = " -txscale -get"
     Else
         ; for B0 mode, add mp flag for uT/m
-        $cmdArgs = " -shim -mp -get > "
+        $cmdArgs = " -shim -mp -get"
     EndIf
 
-    LogMessage("AdjValidate" & $cmdArgs & $ShimsetFilename)
-    Local $runCmd = @ComSpec & ' /s /c ""' & $AdjValidate & '"' & $cmdArgs & $ShimsetFilename & '"'
+    ; run AdjValidate directly (no cmd.exe redirection) so stdout can be checked for errors;
+    ; the output is written to the shimset file below
+    LogMessage("AdjValidate" & $cmdArgs)
+    Local $runCmd = '"' & $AdjValidate & '"' & $cmdArgs
     Local $ProcID = Run($runCmd, @WorkingDir, @SW_HIDE, $STDERR_CHILD + $STDOUT_CHILD)
-    Local $procRet = ProcessWaitClose($ProcID)
+    If ($ProcID == 0) Then
+        MsgBox($MB_SYSTEMMODAL + $MB_TOPMOST, $PgmName & ": Error", "Failed to run AdjValidate command (error code = " & @error & ")!")
+        GUICtrlSetState($idList, $GUI_FOCUS) ; put focus back on list after any popup
+        Return
+    EndIf
+    Local $procRet = ProcessWaitClose($ProcID, $AdjTimeout)
     Local $procErr = @extended
     Local $sOut = StdoutRead($ProcID)
     Local $sErr = StderrRead($ProcID)
     Local $dumpErr = 0
 
-    If ($procRet == 1) Then
+    If ($procRet == 0) Then
+        ProcessClose($ProcID)
+        LogMessage("ERROR: AdjValidate did not respond within " & $AdjTimeout & " seconds!")
+    ElseIf ($procRet == 1) Then
         If ($procErr <> 0) Then
             ; error returns nonzero exit code
             LogMessage("ERROR attempting to read current shims!")
             $dumpErr += 1
+        ElseIf (FileWrite($ShimsetFilename, $sOut) == 0) Then
+            LogMessage("ERROR: could not write " & $ShimsetFilename & "!")
+            $dumpErr += 1
         Else
             ; N4 returned "OK" on stderr; throw a warning if we see anything else
-            If ((UBound($sErr) > 1) And (StringCompare(StringStripWS($sErr, $STR_STRIPALL), "OK"))) Then
+            ; TODO: verify if this is still valid on NX
+            If ((StringLen($sErr) > 0) And (StringCompare(StringStripWS($sErr, $STR_STRIPALL), "OK"))) Then
                 LogMessage("WARNING: unexpected response reading current shims!")
                 $dumpErr += 1
             EndIf
@@ -467,31 +507,43 @@ Func OnSet()
 
     ; remove first two fields, format string with space delimiters
     _ArrayDelete($shimvalArr, "0-2")
-    $shimvalStr = _ArrayToString($shimvalArr, " ")
+    ; strip trailing spaces left by empty columns (2nd order B0, 8ch B1)
+    $shimvalStr = StringStripWS(_ArrayToString($shimvalArr, " "), $STR_STRIPTRAILING)
 
+    ; run AdjValidate directly (not via cmd.exe) so values are never interpreted by a shell
     LogMessage("AdjValidate" & $cmdArgs & $shimvalStr)
-    Local $runCmd = @ComSpec & ' /s /c ""' & $AdjValidate & '"' & $cmdArgs & $shimvalStr & '"'
+    Local $runCmd = '"' & $AdjValidate & '"' & $cmdArgs & $shimvalStr
     Local $ProcID = Run($runCmd, @WorkingDir, @SW_HIDE, $STDERR_CHILD + $STDOUT_CHILD)
-    Local $procRet = ProcessWaitClose($ProcID)
+    If ($ProcID == 0) Then
+        MsgBox($MB_SYSTEMMODAL + $MB_TOPMOST, $PgmName & ": Error", "Failed to run AdjValidate command (error code = " & @error & ")!")
+        GUICtrlSetState($idList, $GUI_FOCUS) ; put focus back on list after any popup
+        Return
+    EndIf
+    Local $procRet = ProcessWaitClose($ProcID, $AdjTimeout)
     Local $procErr = @extended
     Local $sOut = StdoutRead($ProcID)
     Local $sErr = StderrRead($ProcID)
     Local $dumpErr = 0
 
-    If ($procRet == 1) Then
+    If ($procRet == 0) Then
+        ProcessClose($ProcID)
+        LogMessage("ERROR: AdjValidate did not respond within " & $AdjTimeout & " seconds!")
+    ElseIf ($procRet == 1) Then
         If ($procErr <> 0) Then
             ; error returns nonzero exit code
             LogMessage("ERROR attempting to set shims!")
             $dumpErr += 1
         Else
-            If ((UBound($sErr) > 1) And (StringCompare(StringStripWS($sErr, $STR_STRIPALL), "OK"))) Then
+            If ((StringLen($sErr) > 0) And (StringCompare(StringStripWS($sErr, $STR_STRIPALL), "OK"))) Then
                 ; N4 returned "OK" on stderr; throw a warning if we see anything else
+                ; TODO: verify if this is still valid on NX
                 LogMessage("WARNING: unexpected response setting shims!")
                 $dumpErr += 1
+            Else
+                LogMessage("Succeeded!")
             EndIf
 
-            ; otherwise, success = exit code zero
-            LogMessage("Succeeded!")
+            ; success = exit code zero (even with a warning)
             $validShims = True
         EndIf
     Else
@@ -684,10 +736,10 @@ Func DeleteFiles($arg)
 
         ; get filename to delete
         Local $values = StringSplit(_GUICtrlListView_GetItemTextString($idList, $arrItems[$idx]-1) , "|")
-        Local $shimsetFilename = GetFilenameFromTimeStamp($values[2])
+        Local $ShimsetFilename = GetFilenameFromTimeStamp($values[2])
 
         ; delete it
-        FileDelete($shimsetFilename)
+        FileDelete($ShimsetFilename)
         $dirNeedsRefresh = True
     Next
 
@@ -779,12 +831,17 @@ Func GetShimValuesFromFile($fname)
             EndIf
         Else
             ; for B0 mode, expect 8 or 12 values depending on 2nd or 3rd order capability
+            ; TODO: what happens if there are multiple GPAs here? handle 11 or 15 values? check on Cima.X or Connectom.X!
             If (($found <> 8) And ($found <> 12)) Then ContinueLoop
         EndIf
 
-        ; double check the items are all numeric and in valid range
+        ; double check the items are all numeric (these values are passed to AdjValidate)
+        ; TODO: check against hardware limits for the current mode?
         For $idx=0 To $found-1
-            ; TODO
+            If (Not StringRegExp($arr[$idx], "^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$")) Then
+                If ($debugLog > 0) Then LogMessage("WARNING: " & $fname & " has non-numeric value '" & $arr[$idx] & "'!")
+                ContinueLoop 2 ; skip this line
+            EndIf
         Next
 
         ; everything checks out at this point, so return the | delimited string
@@ -896,22 +953,14 @@ Func FM_UpdateListView()
         If (UBound($shimarr) > 1) Then
             Local $timestamp = GetTimeStampFromFilename(FileGetTime($fileArr[$idx], $FT_MODIFIED, $FT_STRING))
             GUICtrlCreateListViewItem($descArr[$idx] & "|" & $timestamp & "|" & _ArrayToString($shimarr, "|"), $idList)
-            GUICtrlSetOnEvent(-1, "FM_ShowLog")
         EndIf
     Next
 
-    ; reset log history and select Newest which will show the newest log
-    ; note: ClickItem seems to be too fast sometimes for GUICtrlSetOnEvent to register,
-    ;       so we will retry for e.g. 2 seconds to make sure it does
+    ; reset log history, select the first row and show its log directly
     $FM_LastLog = -1
     If (_GUICtrlListView_GetItemCount($idList) > 0) Then
-        _GUICtrlListView_ClickItem($idList, 0)
-        Local $clickTries = 1
-        While (($FM_LastLog == -1) And ($clickTries <= 20))
-            Sleep(100)
-            _GUICtrlListView_ClickItem($idList, 0)
-            $clickTries += 1
-        WEnd
+        _GUICtrlListView_SetItemSelected($idList, 0)
+        FM_ShowLog()
     EndIf
 
     GUICtrlSetState($idList, $GUI_FOCUS) ; put focus back on list after any popup
@@ -928,17 +977,19 @@ Func FM_ShowLog()
     Local $idx = $sel[1]
     if ($idx == $FM_LastLog) Then Return
 
-    ; get log filename & description
+    ; get log filename from the row's description, not its position, because
+    ; rows are only listed for valid shim files (e.g. "Old 2" may be row 1)
+    Local $desc = _GUICtrlListView_GetItemText($idList, $idx, 0)
     Local $fname = "FASTMAP.log"
-    Local $desc = "Newest"
-    If (($idx > 0) And ($idx <= 3)) Then
-        $fname = "FASTMAP.log.00" & $idx
-        $desc = "Old " & $idx
-    EndIf
+    If (StringRegExp($desc, "^Old [1-3]$")) Then $fname = "FASTMAP.log.00" & StringRight($desc, 1)
+    $FM_LastLog = $idx
 
     ; open file, check for error
     Local $fh = FileOpen($fname, $FO_READ)
-    If ($fh == -1) Then    Return
+    If ($fh == -1) Then
+        LogMessage("No log found for " & $desc & " FASTMAP results (" & $fname & ")")
+        Return
+    EndIf
 
     ; print header
     LogMessage("")
@@ -949,17 +1000,24 @@ Func FM_ShowLog()
     ; loop to read and display all lines of file
     While 1
         Local $line = FileReadLine($fh)
-        If (@error) Then
-            $FM_LastLog = $idx
-            FileClose($fh)
-            Return
-        EndIf
-
+        If (@error) Then ExitLoop
         LogMessage($line)
     WEnd
 
-    $FM_LastLog = $idx
     FileClose($fh)
 
     GUICtrlSetState($idList, $GUI_FOCUS) ; put focus back on list after any popup
 EndFunc ;==>FM_ShowLog
+
+
+; refresh FASTMAP log when list selection changes
+Func FM_WM_NOTIFY($hWnd, $iMsg, $wParam, $lParam)
+    #forceref $hWnd, $iMsg, $wParam
+    Local $tNMLV = DllStructCreate($tagNMLISTVIEW, $lParam)
+    If (HWnd(DllStructGetData($tNMLV, "hWndFrom")) <> $hList) Then Return $GUI_RUNDEFMSG
+    If (DllStructGetData($tNMLV, "Code") <> $LVN_ITEMCHANGED) Then Return $GUI_RUNDEFMSG
+    ; only react when an item becomes selected (ignores deselect notifications)
+    If (BitAND(DllStructGetData($tNMLV, "NewState"), $LVIS_SELECTED) And _
+        Not BitAND(DllStructGetData($tNMLV, "OldState"), $LVIS_SELECTED)) Then GUICtrlSendToDummy($idSelDummy)
+    Return $GUI_RUNDEFMSG
+EndFunc ;==>FM_WM_NOTIFY
