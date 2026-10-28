@@ -422,7 +422,9 @@ Func OnGet()
     EndIf
 
     If (Not $validShims) Then
-        FileDelete($ShimsetFilename)
+        If (FileExists($ShimsetFilename) And (FileDelete($ShimsetFilename) == 0)) Then
+            LogMessage("WARNING: could not remove incomplete " & $ShimsetFilename & "!")
+        EndIf
         MsgBox($MB_SYSTEMMODAL + $MB_TOPMOST, $PgmName & ": Error", "Failed to read the current shims!" & @CRLF & "Please check the error log.")
         GUICtrlSetState($idList, $GUI_FOCUS) ; put focus back on list after any popup
         Return
@@ -699,6 +701,15 @@ Func DeleteFiles($arg)
         Return
     EndIf
 
+    ; warn that "delete unselected" with nothing selected will delete everything
+    If (($arg == 2) And ($selItems[0] == 0)) Then
+        If ($IDYES <> MsgBox($MB_SYSTEMMODAL + $MB_ICONWARNING + $MB_YESNO + $MB_TOPMOST + $MB_DEFBUTTON2, _
+                $PgmName & ": Warning", "This will delete ALL shimset files. Are you sure?")) Then
+            GUICtrlSetState($idList, $GUI_FOCUS) ; put focus back on list after any popup
+            Return
+        EndIf
+    EndIf
+
     ; get confirmation if more than one file
     If ($numDel > 1) Then
         If ($IDYES <> MsgBox($MB_SYSTEMMODAL + $MB_ICONQUESTION + $MB_YESNO + $MB_TOPMOST, _
@@ -731,6 +742,7 @@ Func DeleteFiles($arg)
     EndIf
 
     ; now loop through and delete the specified file(s)
+    Local $numFailed = 0
     For $idx=0 To $numItems-1
         If ($arrItems[$idx] == 0) Then ContinueLoop
 
@@ -739,11 +751,19 @@ Func DeleteFiles($arg)
         Local $ShimsetFilename = GetFilenameFromTimeStamp($values[2])
 
         ; delete it
-        FileDelete($ShimsetFilename)
+        If (FileDelete($ShimsetFilename) == 0) Then
+            LogMessage("ERROR: could not delete " & $ShimsetFilename & "!")
+            $numFailed += 1
+        EndIf
         $dirNeedsRefresh = True
     Next
 
     If ($dirNeedsRefresh) Then UpdateListView()
+
+    If ($numFailed > 0) Then
+        MsgBox($MB_SYSTEMMODAL + $MB_TOPMOST, $PgmName & ": Error", "Could not delete " & $numFailed & " shimset file(s)!" & @CRLF & "Please check the error log.")
+        GUICtrlSetState($idList, $GUI_FOCUS) ; put focus back on list after any popup
+    EndIf
 EndFunc ;==>DeleteFiles
 
 
@@ -920,10 +940,11 @@ EndFunc ;==>GetFilenameFromTimeStamp
 
 ; print a message to the console log (edit box)
 Func LogMessage($msg)
+    $msg = StringRegExpReplace($msg, "(?:\r\n?|\n)+", " ")
     If (_GUICtrlEdit_GetTextLen($idEdit) > 0) Then
-        _GUICtrlEdit_AppendText($idEdit, @CRLF & StringRegExpReplace($msg, "[\r\n]", ""))
+        _GUICtrlEdit_AppendText($idEdit, @CRLF & $msg)
     Else
-        _GUICtrlEdit_AppendText($idEdit, StringRegExpReplace($msg, "[\r\n]", ""))
+        _GUICtrlEdit_AppendText($idEdit, $msg)
     EndIf
 EndFunc ;==>LogMessage
 
